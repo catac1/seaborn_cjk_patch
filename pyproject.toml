@@ -1,7 +1,7 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
-build-backend = "setuptools.backends.legacy:build"
-
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+ 
 [project]
 name = "seaborn-cjk"
 version = "0.1.0"
@@ -21,14 +21,14 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "Topic :: Scientific/Engineering :: Visualization",
 ]
-
+ 
 [project.optional-dependencies]
 seaborn = ["seaborn>=0.11"]
 dev = ["pytest", "seaborn", "matplotlib"]
-
+ 
 [project.urls]
 Repository = "https://github.com/yourname/seaborn-cjk"
-
+ 
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["seaborn_cjk*"]
