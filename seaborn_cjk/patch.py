@@ -49,9 +49,92 @@ _CJK_LANG_IDS: Dict[int, str] = {
 }
 
 # ---------------------------------------------------------------------------
-# Ranked list of well-known CJK font *English* names.
+# Localized alias table
+#
+# On Windows, matplotlib's font manager often registers fonts under their
+# localized name (e.g. "굴림" instead of "Gulim") because that is what the
+# font file's SFNT name_id=1 field contains for the system locale.
+#
+# _LOCALIZED_ALIAS maps every known localized name back to the canonical
+# English name that must be written into rcParams["font.sans-serif"] so
+# that matplotlib's findfont() can resolve it.
 # ---------------------------------------------------------------------------
-_CJK_CANDIDATES: List[str] = [
+
+_LOCALIZED_ALIAS: Dict[str, str] = {
+    # Korean
+    "굴림":       "Gulim",
+    "굴림체":     "GulimChe",
+    "바탕":       "Batang",
+    "바탕체":     "BatangChe",
+    "돋움":       "Dotum",
+    "돋움체":     "DotumChe",
+    "궁서":       "Gungsuh",
+    "궁서체":     "GungsuhChe",
+    "맑은 고딕":  "Malgun Gothic",
+    # Simplified Chinese
+    "微软雅黑":   "Microsoft YaHei",
+    "黑体":       "SimHei",
+    "宋体":       "SimSun",
+    "仿宋":       "FangSong",
+    "楷体":       "KaiTi",
+    "新宋体":     "NSimSun",
+    # Traditional Chinese
+    "微軟正黑體": "Microsoft JhengHei",
+    # Japanese
+    "メイリオ":       "Meiryo",
+    "ＭＳ ゴシック":  "MS Gothic",
+    "ＭＳ 明朝":      "MS Mincho",
+    "ＭＳ Ｐゴシック": "MS PGothic",
+    "ＭＳ Ｐ明朝":    "MS PMincho",
+    "游ゴシック":     "Yu Gothic",
+    "游明朝":         "Yu Mincho",
+    # macOS Chinese
+    "苹方-简": "PingFang SC",
+    "苹方-繁": "PingFang TC",
+}
+
+# ---------------------------------------------------------------------------
+# Per-locale font priority groups
+#
+# Each entry is a list of font names (English and/or localized) in preference
+# order for that locale.  detect_cjk_font() prepends the matching group to
+# the general candidate list so locale-appropriate fonts win.
+# ---------------------------------------------------------------------------
+
+_LOCALE_FONT_PRIORITY: Dict[str, List[str]] = {
+    "ko": [
+        "Malgun Gothic", "맑은 고딕",
+        "Gulim",         "굴림",
+        "Batang",        "바탕",
+        "Dotum",         "돋움",
+    ],
+    "ja": [
+        "Meiryo",    "メイリオ",
+        "Yu Gothic", "游ゴシック",
+        "MS Gothic", "ＭＳ ゴシック",
+        "MS Mincho", "ＭＳ 明朝",
+    ],
+    "zh_CN": [
+        "Microsoft YaHei", "微软雅黑",
+        "SimHei",          "黑体",
+        "SimSun",          "宋体",
+    ],
+    "zh_SG": [
+        "Microsoft YaHei", "微软雅黑",
+        "SimHei",          "黑体",
+    ],
+    "zh_TW": [
+        "Microsoft JhengHei", "微軟正黑體",
+        "PingFang TC",        "苹方-繁",
+    ],
+    "zh_HK": [
+        "Microsoft JhengHei", "微軟正黑體",
+        "PingFang TC",        "苹方-繁",
+    ],
+}
+
+# Base candidate list — used as the tail after locale-specific fonts
+_CJK_CANDIDATES_BASE: List[str] = [
     # Noto (cross-platform, open source) - most reliable
     "Noto Sans CJK SC",
     "Noto Sans CJK TC",
@@ -60,20 +143,33 @@ _CJK_CANDIDATES: List[str] = [
     "Noto Serif CJK SC",
     "Noto Serif CJK TC",
     "Noto Serif CJK JP",
-    # Windows
-    "Microsoft YaHei",       # simplified chinese
-    "Microsoft JhengHei",    # traditional chinese
-    "MS Gothic",             # japanese
-    "MS Mincho",             # japanese serif
-    "Meiryo",                # japanese
-    "Malgun Gothic",         # korean
-    "Gulim",                 # korean
-    "Batang",                # korean serif
-    "Dotum",                 # korean
+    # Windows — English names
+    "Microsoft YaHei",
+    "Microsoft JhengHei",
+    "Malgun Gothic",
+    "Meiryo",
+    "MS Gothic",
+    "MS Mincho",
+    "Yu Gothic",
+    "Yu Mincho",
+    "Gulim",
+    "Batang",
+    "Dotum",
     "SimHei",
     "SimSun",
     "FangSong",
     "KaiTi",
+    # Windows — localized names (registered under native script on non-English Windows)
+    "맑은 고딕",    # Malgun Gothic
+    "굴림",         # Gulim
+    "바탕",         # Batang
+    "돋움",         # Dotum
+    "微软雅黑",     # Microsoft YaHei
+    "微軟正黑體",   # Microsoft JhengHei
+    "黑体",         # SimHei
+    "宋体",         # SimSun
+    "メイリオ",     # Meiryo
+    "游ゴシック",   # Yu Gothic
     # macOS
     "PingFang SC",
     "PingFang TC",
@@ -84,6 +180,8 @@ _CJK_CANDIDATES: List[str] = [
     "STSong",
     "STFangsong",
     "Apple LiGothic",
+    "苹方-简",      # PingFang SC (localized)
+    "苹方-繁",      # PingFang TC (localized)
     # Linux common
     "WenQuanYi Micro Hei",
     "WenQuanYi Zen Hei",
@@ -95,6 +193,90 @@ _CJK_CANDIDATES: List[str] = [
     # Broad-coverage fallback
     "Arial Unicode MS",
 ]
+
+
+# ---------------------------------------------------------------------------
+# Locale detection
+# ---------------------------------------------------------------------------
+
+def _detect_system_locale() -> Optional[str]:
+    """
+    Return a locale tag such as ``"ko"``, ``"ja"``, ``"zh_CN"``, ``"zh_TW"``,
+    or ``None`` if the locale cannot be determined or is not CJK.
+
+    Detection order (most to least reliable):
+    1. Windows registry  ``HKCU/Control Panel/International/LocaleName``
+    2. Python ``locale.getlocale()``
+    3. ``LANG`` / ``LANGUAGE`` / ``LC_ALL`` environment variables
+    """
+    import sys, os, locale as _locale
+
+    raw: Optional[str] = None
+
+    # 1. Windows registry — most accurate on Windows
+    if sys.platform == "win32":
+        try:
+            import winreg
+            key = winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER,
+                r"Control Panel\International",
+            )
+            raw = winreg.QueryValueEx(key, "LocaleName")[0]  # e.g. "ko-KR"
+            logger.debug("seaborn_cjk: locale from winreg: %r", raw)
+        except Exception:
+            pass
+
+    # 2. Python locale module
+    if not raw:
+        try:
+            loc = _locale.getlocale()[0]
+            if loc and loc not in ("C", "POSIX"):
+                raw = loc
+                logger.debug("seaborn_cjk: locale from locale.getlocale(): %r", raw)
+        except Exception:
+            pass
+
+    # 3. Environment variables
+    if not raw:
+        for var in ("LANG", "LANGUAGE", "LC_ALL", "LC_MESSAGES"):
+            val = os.environ.get(var, "")
+            if val and val not in ("C", "POSIX"):
+                raw = val.split(".")[0]  # strip encoding e.g. "ko_KR.UTF-8"
+                logger.debug("seaborn_cjk: locale from env %s: %r", var, raw)
+                break
+
+    if not raw:
+        return None
+
+    # Normalise: "ko-KR" -> "ko_KR", then match against known CJK prefixes
+    normalised = raw.replace("-", "_")
+
+    # Exact or region match: zh_CN, zh_TW, zh_HK, zh_SG
+    for key in _LOCALE_FONT_PRIORITY:
+        if normalised.startswith(key):
+            return key
+
+    # Language-only match: ko_KR -> ko, ja_JP -> ja
+    lang = normalised.split("_")[0]
+    if lang in _LOCALE_FONT_PRIORITY:
+        return lang
+
+    return None
+
+
+def _build_candidates(locale_lang: Optional[str] = None) -> List[str]:
+    """
+    Return the full ordered candidate list, with locale-appropriate fonts
+    promoted to the front when *locale_lang* is known.
+    """
+    if locale_lang is None:
+        return _CJK_CANDIDATES_BASE
+
+    priority = _LOCALE_FONT_PRIORITY.get(locale_lang, [])
+    # Prepend locale fonts, then append the rest (without duplicates)
+    priority_set = set(priority)
+    tail = [n for n in _CJK_CANDIDATES_BASE if n not in priority_set]
+    return priority + tail
 
 # ---------------------------------------------------------------------------
 # Module-level state
@@ -228,7 +410,19 @@ def list_cjk_fonts(localized: bool = False) -> List[str]:
     """
     _ensure_index()
     available = {f.name for f in fm.fontManager.ttflist}
-    found_english = [n for n in _CJK_CANDIDATES if n in available]
+
+    # Walk candidates; resolve each to its canonical English name.
+    # Deduplicate: a localized and English entry for the same font both
+    # resolve to the same canonical name, so we only keep the first hit.
+    seen: set = set()
+    found_english: List[str] = []
+    for name in _CJK_CANDIDATES:
+        if name not in available:
+            continue
+        canonical = _LOCALIZED_ALIAS.get(name, name)
+        if canonical not in seen:
+            seen.add(canonical)
+            found_english.append(canonical)
 
     if not localized:
         return found_english
@@ -260,20 +454,46 @@ def list_cjk_fonts_detailed() -> List[Dict]:
     """
     _ensure_index()
     available = {f.name for f in fm.fontManager.ttflist}
+
+    def _is_available(eng_name: str) -> bool:
+        if eng_name in available:
+            return True
+        return any(v in available for v in _english_to_localized.get(eng_name, {}).values())
+
     return [
         {"english": name, "localized": _english_to_localized.get(name, {})}
         for name in _CJK_CANDIDATES
-        if name in available
+        if _is_available(name)
     ]
 
 
 def detect_cjk_font() -> Optional[str]:
-    """Return the English name of the best available CJK font, or None."""
+    """Return the canonical English name of the best available CJK font, or None.
+
+    Walks the candidate list in priority order.  Locale-appropriate fonts are
+    promoted to the front automatically (e.g. on a Korean Windows system,
+    Malgun Gothic / Gulim appear before Microsoft YaHei / Meiryo).
+
+    Each candidate is either an English name ("Gulim") or a known localized
+    name ("굴림").  Localized matches are resolved back to the English name via
+    _LOCALIZED_ALIAS so rcParams always receives a name matplotlib can resolve.
+    """
+    locale_lang = _detect_system_locale()
+    if locale_lang:
+        logger.debug("seaborn_cjk: system locale detected as %r", locale_lang)
+
+    candidates = _build_candidates(locale_lang)
     available = {f.name for f in fm.fontManager.ttflist}
-    for name in _CJK_CANDIDATES:
+
+    for name in candidates:
         if name in available:
-            logger.debug("seaborn_cjk: detected CJK font '%s'", name)
-            return name
+            canonical = _LOCALIZED_ALIAS.get(name, name)
+            logger.debug(
+                "seaborn_cjk: detected '%s' in registry -> using '%s' (locale=%s)",
+                name, canonical, locale_lang,
+            )
+            return canonical
+
     logger.warning(
         "seaborn_cjk: no known CJK font found. "
         "Install one (e.g. `apt install fonts-noto-cjk`) "
